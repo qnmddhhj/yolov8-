@@ -1,0 +1,241 @@
+---------------显示和录制：
+C:\Users\A\Desktop\Intel realsense (2)
+【Intel Realsense D435】实现视频显示、录制和保存（Python）_d435录制视频-CSDN博客
+'''
+使用realsense相机录制视频
+'''
+ 
+#!/usr/bin/env python
+# coding=utf-8
+import time
+import pyrealsense2 as rs
+import numpy as np
+import cv2
+ 
+class Camera(object):
+    '''
+    realsense相机处理类
+    '''
+    def __init__(self, width=1280, height=720, fps=30):
+        self.width = width
+        self.height = height
+        self.pipeline = rs.pipeline()
+        self.config = rs.config()
+        self.config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, fps)
+        self.config.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16,  fps)
+        # self.align = rs.align(rs.stream.color) # depth2rgb
+        self.pipeline.start(self.config)  # 开始连接相机
+ 
+ 
+    def get_frame(self):
+        frames = self.pipeline.wait_for_frames() # 获得frame (包括彩色，深度图)
+        # 创建对齐对象
+        align_to = rs.stream.color            # rs.align允许我们执行深度帧与其他帧的对齐
+        align = rs.align(align_to)            # “align_to”是我们计划对齐深度帧的流类型。
+        aligned_frames = align.process(frames)
+        # 获取对齐的帧
+        aligned_depth_frame = aligned_frames.get_depth_frame()  # aligned_depth_frame是对齐的深度图
+        color_frame = aligned_frames.get_color_frame()
+        colorizer = rs.colorizer()
+        depthx_image = np.asanyarray(aligned_depth_frame.get_data())
+        color_image = np.asanyarray(color_frame.get_data())
+        colorizer_depth = np.asanyarray(colorizer.colorize(aligned_depth_frame).get_data())
+        return color_image, depthx_image,colorizer_depth
+ 
+    def release(self):
+        self.pipeline.stop()
+if __name__=='__main__':
+ 
+    # 视频保存路径
+    video_path = f'D://Realsense//rgb_data//{int(time.time())}.mp4'
+    video_depth_path = f'D://Realsense//depth_data//{int(time.time())}_depth.mp4'
+    video_depthcolor_path = f'D://Realsense//depthcolor_data//{int(time.time())}_depthcolor.mp4'
+    video_depthcolor_camera_path = f'D://Realsense//camera_colordepth//{int(time.time())}_depthcolor.mp4'
+    # 初始化参数
+    fps, w, h = 30, 1280, 720
+    mp4 = cv2.VideoWriter_fourcc(*'mp4v') # 视频格式
+    wr  = cv2.VideoWriter(video_path, mp4, fps, (w, h), isColor=True) # 视频保存而建立对象
+    wr_depth = cv2.VideoWriter(video_depth_path, mp4, fps, (w, h), isColor=False)
+    wr_depthcolor = cv2.VideoWriter(video_depthcolor_path, mp4, fps, (w, h), isColor=True)
+    wr_camera_colordepth = cv2.VideoWriter(video_depthcolor_camera_path, mp4, fps, (w, h), isColor=True)
+ 
+    cam = Camera(w, h, fps)
+    print('录制视频请按: s, 保存视频或退出请按：q')
+    flag_V = 0
+    while True:
+            color_image, depth_image, colorizer_depth = cam.get_frame() # 读取图像帧，包括RGB图和深度图
+         #深度图数据格式转换，uint16→uint8
+            depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
+            images = np.hstack((color_image, depth_colormap))   
+            cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
+            cv2.imshow('RealSense', colorizer_depth)
+ 
+            # print('ll')
+            key = cv2.waitKey(1)
+            if key & 0xFF == ord('s') :
+                flag_V = 1
+            if flag_V == 1:
+                wr.write(color_image)                # 保存RGB图像帧
+                wr_depth.write(depth_image)          # 保存基于灰度深度图
+                wr_depthcolor.write(depth_colormap)  # 保存计算所得着色深度图
+                wr_camera_colordepth.write(colorizer_depth)  # 保存相机自行计算的着色深度图
+                print('...录制视频中...')
+            if key & 0xFF == ord('q') or key == 27:
+                cv2.destroyAllWindows()
+                print('...录制结束/直接退出...')
+                break
+    wr_depthcolor.release()
+    wr_depth.release()
+    wr.release()
+    wr_camera_colordepth.release()
+    cam.release()
+    print(f'，若保存视频，则视频保存在：{video_path}')
+ 
+ 
+
+------------------------------实时获取深度值
+# -*- coding: utf-8 -*-
+import pyrealsense2 as rs
+import numpy as np
+import cv2
+ 
+''' 
+设置
+'''
+pipeline = rs.pipeline()    # 定义流程pipeline，创建一个管道
+config = rs.config()    # 定义配置config
+config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 15)      # 配置depth流
+config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 15)     # 配置color流
+
+pipe_profile = pipeline.start(config)       # streaming流开始
+
+# 创建对齐对象与color流对齐
+align_to = rs.stream.color      # align_to 是计划对齐深度帧的流类型
+align = rs.align(align_to)      # rs.align 执行深度帧与其他帧的对齐
+
+''' 
+获取对齐图像帧与相机参数
+'''
+def get_aligned_images():
+    
+    frames = pipeline.wait_for_frames()     # 等待获取图像帧，获取颜色和深度的框架集     
+    aligned_frames = align.process(frames)      # 获取对齐帧，将深度框与颜色框对齐  
+
+    aligned_depth_frame = aligned_frames.get_depth_frame()      # 获取对齐帧中的的depth帧 
+    aligned_color_frame = aligned_frames.get_color_frame()      # 获取对齐帧中的的color帧
+
+    #### 获取相机参数 ####
+    depth_intrin = aligned_depth_frame.profile.as_video_stream_profile().intrinsics     # 获取深度参数（像素坐标系转相机坐标系会用到）
+    color_intrin = aligned_color_frame.profile.as_video_stream_profile().intrinsics     # 获取相机内参
+
+    #### 将images转为numpy arrays ####  
+    img_color = np.asanyarray(aligned_color_frame.get_data())       # RGB图  
+    img_depth = np.asanyarray(aligned_depth_frame.get_data())       # 深度图（默认16位）
+
+    return color_intrin, depth_intrin, img_color, img_depth, aligned_depth_frame
+
+''' 
+-----------------------获取随机点三维坐标
+'''
+def get_3d_camera_coordinate(depth_pixel, aligned_depth_frame, depth_intrin):
+    x = depth_pixel[0]
+    y = depth_pixel[1]
+    dis = aligned_depth_frame.get_distance(x, y)        # 获取该像素点对应的深度
+    # print ('depth: ',dis)       # 深度单位是m
+    camera_coordinate = rs.rs2_deproject_pixel_to_point(depth_intrin, depth_pixel, dis)
+    # print ('camera_coordinate: ',camera_coordinate)
+    return dis, camera_coordinate
+
+
+if __name__=="__main__":
+    while True:
+        ''' 
+        获取对齐图像帧与相机参数
+        '''
+        color_intrin, depth_intrin, img_color, img_depth, aligned_depth_frame = get_aligned_images()        # 获取对齐图像与相机参数
+
+        ''' 
+        获取随机点三维坐标
+        '''
+        depth_pixel = [320, 240]        # 设置想要获得深度的点的像素坐标，以相机中心点为例
+        dis, camera_coordinate = get_3d_camera_coordinate(depth_pixel, aligned_depth_frame, depth_intrin) # 获取对应像素点的三维坐标
+        print ('depth: ',dis)       # 深度单位是m
+        print ('camera_coordinate: ',camera_coordinate)
+
+        ''' 
+        显示图像与标注
+        '''
+        #### 在图中标记随机点及其坐标 ####
+        cv2.circle(img_color, (depth_pixel[0],depth_pixel[1]), 8, [255,0,255], thickness=-1)
+        cv2.putText(img_color,"Dis:"+str(dis)+" m", (depth_pixel[0],depth_pixel[1]), cv2.FONT_HERSHEY_SIMPLEX, 1.2,[0,0,255])
+        cv2.putText(img_color,"X:"+str(camera_coordinate[0])+" m", (depth_pixel[0],depth_pixel[1]+20), cv2.FONT_HERSHEY_SIMPLEX, 1.2,[255,0,0])
+        cv2.putText(img_color,"Y:"+str(camera_coordinate[1])+" m", (depth_pixel[0],depth_pixel[1]+40), cv2.FONT_HERSHEY_SIMPLEX, 1.2,[255,0,0])
+        cv2.putText(img_color,"Z:"+str(camera_coordinate[2])+" m", (depth_pixel[0],depth_pixel[1]+60), cv2.FONT_HERSHEY_SIMPLEX, 1.2,[255,0,0])
+        
+        #### 显示画面 ####
+        cv2.imshow('RealSence',img_color)
+        key = cv2.waitKey(1)
+
+
+
+---------------------------获取单张图片深度值
+#读取深度图片
+import cv2
+import numpy as np
+
+# 读取深度图像
+depth_image = cv2.imread('C:/Users/A/Desktop/2.png', cv2.IMREAD_UNCHANGED)  # 使用IMREAD_UNCHANGED以确保图像是以16位深度读取
+
+#确认通道值
+print(depth_image.shape)
+
+
+if depth_image is None:
+    print("图像读取失败，请检查路径或文件格式")
+else:
+    print("图像读取成功")
+
+# 转换为灰度图像
+depth_image = cv2.cvtColor(depth_image, cv2.COLOR_BGR2GRAY)
+print("转换为单通道深度图像。")
+
+#获取指定像素的深度值
+# 假设我们想获取图像中心点的深度值
+height, width = depth_image.shape
+center_x, center_y = width // 2, height // 2
+
+# 获取中心点的深度值
+depth_value = depth_image[center_y, center_x]
+print(f"中心点的深度值为: {depth_value} (单位可能是毫米或其他，取决于保存时的单位)")
+
+
+
+--------------------------批量获取深度图像的深度值
+import cv2
+import numpy as np
+import os
+
+# 确保路径是正确的，注意不要在路径字符串的末尾加上多余的引号
+folder_path = r'D:\Realsense\deepth_photo'  # 使用原始字符串，并确保路径正确
+
+try:
+    files = [f for f in os.listdir(folder_path) if f.endswith('.png')]
+    for file in files:
+        file_path = os.path.join(folder_path, file)
+        depth_image = cv2.imread(file_path, cv2.IMREAD_UNCHANGED)
+
+        if depth_image is None:
+            print(f"图像 {file} 读取失败，请检查路径或文件格式")
+        else:
+            print(f"图像 {file} 读取成功")
+            if len(depth_image.shape) == 3:
+                depth_image = cv2.cvtColor(depth_image, cv2.COLOR_BGR2GRAY)
+            height, width = depth_image.shape
+            center_x, center_y = width // 2, height // 2
+            depth_value = depth_image[center_y, center_x]
+            print(f"图像 {file} 的中心点深度值为: {depth_value}")
+except Exception as e:
+    print(f"发生错误：{e}")
+
+
+
